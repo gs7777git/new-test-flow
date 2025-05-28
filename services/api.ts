@@ -68,6 +68,7 @@ async function apiRequest<T_Response = any>(
   }
 }
 
+
 // --- Auth Service ---
 export const authService = {
   login: async (credentials: UserCredentials): Promise<AuthenticatedUser> => {
@@ -78,14 +79,17 @@ export const authService = {
     console.log('authService.login: Attempting with processed credentials:', {email: processedCredentials.email, password: processedCredentials.password ? '******' : 'N/A' });
 
     const users = await apiRequest<User[]>('/Users', 'GET');
-    console.log(`authService.login: Fetched ${users ? users.length : 'null/undefined'} user records.`);
+    console.log(`authService.login: Users fetched (emails only):`, users.map(u => u.email));
 
     if (!Array.isArray(users)) {
         console.error('authService.login: CRITICAL - Fetched users is not an array. Cannot proceed. Users value:', users);
-        throw new Error('Login failed: Could not retrieve user data correctly.'); // This error should ideally not be hit if apiRequest handles array returns
+        throw new Error('Login failed: Could not retrieve user data correctly.');
     }
 
-    const userByEmail = users.find(u => u.email && u.email.toLowerCase() === processedCredentials.email.toLowerCase());
+    const normalizedEmail = processedCredentials.email.toLowerCase().trim();
+    const userByEmail = users.find(
+      u => u.email?.toLowerCase().trim() === normalizedEmail
+    );
 
     if (userByEmail) {
       console.log(`authService.login: Found user by email: ${userByEmail.email}. Comparing password.`);
@@ -112,11 +116,11 @@ export const authService = {
             providedPasswordState = 'EXISTS (non-empty)';
         }
         console.warn(`authService.login: Password mismatch for email: ${processedCredentials.email}. Sheet password state: ${sheetPasswordState}, Provided password state: ${providedPasswordState}.`);
-        throw new Error('Invalid email or password.'); // Keep original error for UI consistency
+        throw new Error('Invalid email or password.');
       }
     } else {
       console.warn(`authService.login: No user found with email: ${processedCredentials.email}. Number of users checked: ${users.length}.`);
-      throw new Error('Invalid email or password.'); // Keep original error for UI consistency
+      throw new Error('Invalid email or password.');
     }
   },
   logout: async (): Promise<void> => {
@@ -214,9 +218,4 @@ export const leadService = {
             updatedAt: new Date().toISOString()
         }
     };
-    return await apiRequest<Lead>('/Leads', 'POST', payload);
-  },
-  deleteLead: async (leadId: string): Promise<void> => {
-    await apiRequest('/Leads', 'POST', { action: 'delete', id: leadId });
-  },
-};
+    return await apiRequest
