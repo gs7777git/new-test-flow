@@ -81,13 +81,18 @@ async function apiRequest<T_Response = any>(
 // --- Auth Service ---
 export const authService = {
   login: async (credentials: UserCredentials): Promise<AuthenticatedUser> => {
-    console.log('authService.login: Attempting to fetch users for email:', credentials.email);
+    const processedCredentials = {
+      email: credentials.email.trim(),
+      password: credentials.password ? credentials.password.trim() : '' // Also trim password if provided
+    };
+    console.log('authService.login: Attempting with processed credentials:', {email: processedCredentials.email, password: processedCredentials.password ? '******' : 'N/A' });
+    
     const users = await apiRequest<User[]>('/Users', 'GET');
     
-    // Critical check: Log what 'users' is, especially in Netlify environment
     console.log('authService.login: Fetched users data type:', typeof users);
     console.log('authService.login: Is users an array?', Array.isArray(users));
-    console.log('authService.login: Fetched users content:', JSON.stringify(users, null, 2));
+    // Be careful logging full user list in production if it contains sensitive data not stripped by worker
+    console.log('authService.login: Fetched users content (first 5 for brevity):', JSON.stringify(users.slice(0,5), null, 2));
 
 
     if (!Array.isArray(users)) {
@@ -95,7 +100,10 @@ export const authService = {
         throw new Error('Login failed: Could not retrieve user data correctly.');
     }
 
-    const user = users.find(u => u.email === credentials.email && u.password === credentials.password);
+    const user = users.find(u => 
+      u.email.toLowerCase() === processedCredentials.email.toLowerCase() && 
+      u.password === processedCredentials.password
+    );
 
     if (user) {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -104,7 +112,7 @@ export const authService = {
       console.log('authService.login: Login successful for user ID:', authenticatedUser.id);
       return authenticatedUser;
     }
-    console.warn('authService.login: Invalid email or password for email:', credentials.email);
+    console.warn('authService.login: Invalid email or password for email:', processedCredentials.email);
     throw new Error('Invalid email or password.');
   },
   logout: async (): Promise<void> => {
