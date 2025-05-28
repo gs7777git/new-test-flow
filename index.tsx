@@ -1,14 +1,15 @@
 
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter, Routes, Route, Navigate, Link, Outlet, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom'; // Added Outlet
 
-import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { AuthProvider } from './contexts/AuthContext';
 import { PageShell } from './components/PageShell';
 import { LoginPage } from './components/auth/LoginPage';
 import { ProtectedRoute } from './components/common/ProtectedRoute';
-import { Spinner } from './components/common/Spinner'; 
-import ErrorBoundary from './components/common/ErrorBoundary'; // Added import
+// Spinner import was present but not used in App, kept for potential future use or if other components rely on it being here.
+// import { Spinner } from './components/common/Spinner'; 
+import ErrorBoundary from './components/common/ErrorBoundary';
 
 import { DashboardPage } from './pages/DashboardPage';
 import { LeadsPage } from './pages/LeadsPage';
@@ -19,43 +20,48 @@ import { Role } from './types';
 
 console.log('index.tsx: script starting');
 
+// Define a layout component for authenticated routes
+const AppLayout: React.FC = () => {
+  // PageShell and ProtectedRoute might use useLocation internally, which is fine.
+  return (
+    <ProtectedRoute>
+      <PageShell>
+        <Outlet /> {/* Child routes will render here */}
+      </PageShell>
+    </ProtectedRoute>
+  );
+};
+
 const App: React.FC = () => {
-  const location = useLocation();
-  // console.log('index.tsx: App component rendering. Current location from useLocation:', location.pathname, 'Search:', location.search); // Reduced verbosity
+  // const location = useLocation(); // No longer directly needed in App component
+  // console.log('index.tsx: App component rendering.'); // Simplified log
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
-      <Route 
-        path="/*"
-        element={
-          <ProtectedRoute>
-            <PageShell>
-              <Routes>
-                <Route path="/" element={<DashboardPage />} />
-                <Route path="/leads" element={<LeadsPage />} />
-                <Route 
-                  path="/users" 
-                  element={
-                    <ProtectedRoute allowedRoles={[Role.ADMIN]}>
-                      <UsersPage />
-                    </ProtectedRoute>
-                  } 
-                />
-                <Route 
-                  path="/reports" 
-                  element={
-                    <ProtectedRoute allowedRoles={[Role.ADMIN, Role.MANAGER]}>
-                      <ReportsPage />
-                    </ProtectedRoute>
-                  } 
-                />
-                <Route path="/settings" element={<SettingsPage />} />
-                <Route path="*" element={<Navigate to="/" replace />} /> {/* Catch-all for unmatched authenticated routes */}
-              </Routes>
-            </PageShell>
-          </ProtectedRoute>
-        }
-      />
+      {/* Routes that use the AppLayout */}
+      <Route element={<AppLayout />}>
+        <Route path="/" element={<DashboardPage />} />
+        <Route path="/leads" element={<LeadsPage />} />
+        <Route 
+          path="/users" 
+          element={
+            <ProtectedRoute allowedRoles={[Role.ADMIN]}>
+              <UsersPage />
+            </ProtectedRoute>
+          } 
+        />
+        <Route 
+          path="/reports" 
+          element={
+            <ProtectedRoute allowedRoles={[Role.ADMIN, Role.MANAGER]}>
+              <ReportsPage />
+            </ProtectedRoute>
+          } 
+        />
+        <Route path="/settings" element={<SettingsPage />} />
+        {/* Catch-all for unmatched authenticated routes under AppLayout */}
+        <Route path="*" element={<Navigate to="/" replace />} /> 
+      </Route>
     </Routes>
   );
 };
