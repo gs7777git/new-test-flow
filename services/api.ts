@@ -1,3 +1,4 @@
+
 import { AuthenticatedUser, User, Role, Lead, LeadStatus } from '../types';
 
 export interface UserCredentials {
@@ -50,21 +51,25 @@ async function apiRequest<T_Response = any>(
 
     const responseData = JSON.parse(rawResponseText);
 
+    // Ensure GET requests for Users and Leads that expect arrays always return arrays
     if (method === 'GET' && (sheetName === 'Users' || sheetName === 'Leads')) {
       if (!Array.isArray(responseData)) {
-        console.warn(`API Warning: Response for ${method} ${url} was not an array. Received:`, typeof responseData, `Returning []. Raw: ${rawResponseText.substring(0,100)}`);
+        // Log the actual type and a snippet of the raw response for better debugging
+        console.warn(`API Warning: Response for ${method} ${url} was not an array. Received type: ${typeof responseData}. Raw response snippet: '${rawResponseText.substring(0,100)}'. Returning [].`, responseData);
         return [] as T_Response;
       }
     }
     return responseData as T_Response;
 
   } catch (e) {
-    console.error(`API Exception during request to ${method} ${url}. Error: ${(e as Error).message}. Raw response text (if available): ${rawResponseText}`, e);
+    // Log the error and the raw response text if available
+    console.error(`API Exception during request to ${method} ${url}. Error: ${(e as Error).message}. Raw response text (if available): '${rawResponseText.substring(0, 200)}...'`, e);
+    // If an array was expected (for Users or Leads GET requests), return an empty array to prevent downstream errors
     if (method === 'GET' && (sheetName === 'Users' || sheetName === 'Leads')) {
         console.warn(`API Critical Failure: Error during ${method} ${url}, expected array. Returning [].`);
         return [] as T_Response;
     }
-    throw e;
+    throw e; // Re-throw other errors
   }
 }
 
@@ -81,133 +86,220 @@ export const authService = {
 
     try {
       const response = await fetch(url, {
-        method: 'GET',
+        method: 'GET', // Ensure this is GET as per the URL structure
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/json', // Though GET typically doesn't need Content-Type for body
         },
       });
 
-      if (!response.ok) {
-        console.error(`authService.login: API responded with status ${response.status} ${response.statusText}`);
-        throw new Error('Invalid email or password.');
-      }
+      const rawResponseText = await response.text(); // Get raw text for better error diagnosis
 
-      const data = await response.json();
-      console.log('authService.login: API response:', data);
+      if (!response.ok) {
+        console.error(`authService.login: API responded with status ${response.status} ${response.statusText}. Raw response: ${rawResponseText}`);
+        throw new Error('Invalid email or password.'); // User-friendly message
+      }
+      
+      const data = JSON.parse(rawResponseText); // Parse after checking response.ok
+      console.log('authService.login: API response data:', data);
 
       if (data.success && data.user) {
-        const authenticatedUser = data.user as AuthenticatedUser;
+        // Ensure the user object has the necessary fields for AuthenticatedUser
+        const authenticatedUser: AuthenticatedUser = {
+            id: data.user.id,
+            name: data.user.name,
+            email: data.user.email,
+            role: data.user.role as Role, // Assuming role comes as a string matching Role enum
+        };
         sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(authenticatedUser));
         console.log('authService.login: Login successful for user:', authenticatedUser.email);
         return authenticatedUser;
       } else {
-        console.warn('authService.login: Login failed. Invalid credentials.');
-        throw new Error('Invalid email or password.');
+        console.warn(`authService.login: Login failed. API indicated failure or missing user data. Message: ${data.message || 'No specific message'}`);
+        throw new Error(data.message || 'Invalid email or password.'); // Use API message if available
       }
-    } catch (error) {
-      console.error('authService.login: Error during login attempt:', error);
-      throw new Error('Invalid email or password.');
+    } catch (error: any) {
+      // Catch and log both network errors and errors thrown from response handling
+      console.error('authService.login: Error during login attempt:', error.message, error);
+      // If it's already an error with a user-friendly message, rethrow it, otherwise provide a generic one
+      if (error.message === 'Invalid email or password.' || (error.message && (error.message.includes('API responded with status') || error.message.includes('Login failed')))) {
+        throw error;
+      }
+      throw new Error('Login attempt failed. Please try again.'); // Generic message for other types of errors
     }
   },
 
   logout: async (): Promise<void> => {
     sessionStorage.removeItem(SESSION_STORAGE_KEY);
+    console.log('authService.logout: Session cleared.');
     return Promise.resolve();
   },
 
   getCurrentUser: async (): Promise<AuthenticatedUser | null> => {
     const storedUser = sessionStorage.getItem(SESSION_STORAGE_KEY);
-    return storedUser ? JSON.parse(storedUser) : null;
+    if (storedUser) {
+        try {
+            const user = JSON.parse(storedUser) as AuthenticatedUser;
+            // Basic validation of the stored user object
+            if(user && user.id && user.email && user.role) {
+              // console.log('authService.getCurrentUser: Found valid user in session:', user.email);
+              return user;
+            } else {
+              console.warn('authService.getCurrentUser: Stored user object is invalid. Clearing session.');
+              sessionStorage.removeItem(SESSION_STORAGE_KEY);
+              return null;
+            }
+        } catch (error) {
+            console.error('authService.getCurrentUser: Error parsing stored user. Clearing session.', error);
+            sessionStorage.removeItem(SESSION_STORAGE_KEY);
+            return null;
+        }
+    }
+    // console.log('authService.getCurrentUser: No user in session.');
+    return null;
   },
 };
 
 // --- User Service ---
 export const userService = {
   getUsers: async (): Promise<User[]> => {
-    const usersFromSheet = await apiRequest<User[]>('/Users', 'GET');
-    if (!Array.isArray(usersFromSheet)) {
-        console.warn('userService.getUsers: API did not return an array. Returning []. Users value:', usersFromSheet);
-        return [];
-    }
+    const usersFromSheet = await apiRequest<User[]>('Users', 'GET'); // Removed leading slash
+    // The apiRequest helper should now consistently return an array or throw.
+    // No need to check for !Array.isArray(usersFromSheet) here if apiRequest handles it.
     return usersFromSheet.map(u => {
-      const { password, ...userWithoutPassword } = u;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { password, ...userWithoutPassword } = u; // Ensure password is not sent to client
       return userWithoutPassword;
     });
   },
 
   getUserById: async (userId: string): Promise<User | undefined> => {
-    const users = await apiRequest<User[]>('/Users', 'GET');
-     if (!Array.isArray(users)) {
-        console.warn('userService.getUserById: API did not return an array for users. Returning undefined. Users value:', users);
-        return undefined;
-    }
+    const users = await apiRequest<User[]>('Users', 'GET'); // Removed leading slash
     const user = users.find(u => u.id === userId);
     if (user) {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { password, ...userWithoutPassword } = user;
         return userWithoutPassword;
     }
     return undefined;
   },
 
-  addUser: async (userData: Omit<User, 'id'> & { passwordInput: string }): Promise<User> => {
+  // UserData for add should include passwordInput, not password directly.
+  addUser: async (userData: Omit<User, 'id' | 'password'> & { passwordInput: string }): Promise<User> => {
     const { passwordInput, ...restUserData } = userData;
-    const newUserPayload: Partial<User> = { ...restUserData, password: passwordInput };
-    const addedUser = await apiRequest<User>('/Users', 'POST', newUserPayload);
-    const { password, ...userToReturn } = addedUser;
-    return userToReturn;
+    // The backend proxy expects a 'password' field for new user creation from 'passwordInput'
+    const newUserPayload: Omit<User, 'id'> = { ...restUserData, password: passwordInput };
+    
+    const response = await apiRequest<{ success: boolean; user: User; message?: string; id?: string; error?: string; }>('Users', 'POST', {
+        action: 'add', // Assuming 'add' action for the proxy
+        data: newUserPayload 
+    });
+
+    if (response.success && response.user) {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { password, ...userToReturn } = response.user;
+        return userToReturn;
+    } else if (response.id && !response.user) { // Handle case where worker returns only ID
+        // If only ID is returned, we might need to re-fetch or construct the user.
+        // For simplicity, returning the input data with the new ID.
+        // This depends on the exact proxy behavior.
+        // It's better if the proxy returns the full created user object (without password).
+        console.warn("User service addUser: Proxy returned ID but not full user object. Constructing from input.");
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { password, ...userToReturn } = { ...newUserPayload, id: response.id } as User;
+        return userToReturn;
+    }
+     else {
+        console.error('Failed to add user. API response:', response);
+        throw new Error(response.message || response.error || 'Failed to add user due to an unknown error from API.');
+    }
   },
 
-  updateUser: async (userId: string, userData: Partial<Omit<User, 'id' | 'email'>> & { passwordInput?: string }): Promise<User> => {
-    const dataToUpdate: any = {};
-    for (const key in userData) {
-        if (key !== 'passwordInput' && Object.prototype.hasOwnProperty.call(userData, key)) {
-            dataToUpdate[key] = (userData as any)[key];
-        }
-    }
-    if (userData.passwordInput) {
-      dataToUpdate.password = userData.passwordInput;
-    }
+  // UserData for update can optionally include passwordInput.
+  updateUser: async (userId: string, userData: Partial<Omit<User, 'id' | 'email' | 'password'>> & { passwordInput?: string }): Promise<User> => {
+    const { passwordInput, ...restUserData } = userData;
+    const dataToUpdate: Partial<Omit<User, 'id' | 'email'>> = { ...restUserData };
 
-    const payload = { action: 'update', id: userId, data: dataToUpdate };
-    const updatedUserFromApi = await apiRequest<User>('/Users', 'POST', payload);
-    const { password, ...userToReturn } = updatedUserFromApi;
-    return userToReturn;
+    if (passwordInput) {
+      (dataToUpdate as any).password = passwordInput; // Add password to data if provided
+    }
+    
+    const response = await apiRequest<{ success: boolean; user: User; message?: string; error?: string; }>('Users', 'POST', { 
+        action: 'update', 
+        id: userId, 
+        data: dataToUpdate 
+    });
+
+    if (response.success && response.user) {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { password, ...userToReturn } = response.user;
+        return userToReturn;
+    } else {
+        console.error('Failed to update user. API response:', response);
+        throw new Error(response.message || response.error || 'Failed to update user due to an unknown error from API.');
+    }
   },
 
   deleteUser: async (userId: string): Promise<void> => {
-    await apiRequest('/Users', 'POST', { action: 'delete', id: userId });
+    const response = await apiRequest<{ success: boolean; message?: string; error?: string; }>('Users', 'POST', { action: 'delete', id: userId });
+    if (!response.success) {
+        console.error('Failed to delete user. API response:', response);
+        throw new Error(response.message || response.error || 'Failed to delete user due to an unknown error from API.');
+    }
   },
 };
 
 // --- Lead Service ---
 export const leadService = {
   getLeads: async (): Promise<Lead[]> => {
-    const leads = await apiRequest<Lead[]>('/Leads', 'GET');
-    if (!Array.isArray(leads)) {
-        console.warn('leadService.getLeads: API did not return an array. Returning []. Leads value:', leads);
-        return [];
-    }
+    const leads = await apiRequest<Lead[]>('Leads', 'GET'); // Removed leading slash
     return leads;
   },
 
   addLead: async (leadData: Omit<Lead, 'id' | 'createdAt' | 'updatedAt' | 'assignedToName'>): Promise<Lead> => {
     const payload = {
         ...leadData,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        // Proxy worker should handle createdAt and updatedAt, and generate ID
     };
-    return await apiRequest<Lead>('/Leads', 'POST', payload);
+    const response = await apiRequest<{ success: boolean; lead: Lead; message?: string; error?: string; id?: string }>('Leads', 'POST', {
+        action: 'add', // Assuming 'add' action for the proxy
+        data: payload
+    });
+
+    if (response.success && response.lead) {
+        return response.lead;
+    } else if (response.id && !response.lead) { // If proxy returns ID only
+        console.warn("Lead service addLead: Proxy returned ID but not full lead object. Constructing from input.");
+        return { ...payload, id: response.id, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as Lead; // Fallback
+    }
+    else {
+        console.error('Failed to add lead. API response:', response);
+        throw new Error(response.message || response.error || 'Failed to add lead due to an unknown error from API.');
+    }
   },
 
   updateLead: async (leadId: string, leadData: Partial<Omit<Lead, 'id' | 'createdAt' | 'assignedToName'>>): Promise<Lead> => {
     const payload = {
-        action: 'update',
-        id: leadId,
-        data: {
-            ...leadData, 
-            updatedAt: new Date().toISOString()
-        }
+        // Proxy worker should handle updatedAt
+        ...leadData,
     };
-    return await apiRequest<Lead>('/Leads', 'POST', payload);
+    const response = await apiRequest<{ success: boolean; lead: Lead; message?: string; error?: string; }>('Leads', 'POST', { 
+        action: 'update', 
+        id: leadId, 
+        data: payload 
+    });
+    if (response.success && response.lead) {
+        return response.lead;
+    } else {
+        console.error('Failed to update lead. API response:', response);
+        throw new Error(response.message || response.error || 'Failed to update lead due to an unknown error from API.');
+    }
+  },
+
+  deleteLead: async (leadId: string): Promise<void> => {
+    const response = await apiRequest<{ success: boolean; message?: string; error?: string; }>('Leads', 'POST', { action: 'delete', id: leadId });
+    if (!response.success) {
+        console.error('Failed to delete lead. API response:', response);
+        throw new Error(response.message || response.error || 'Failed to delete lead due to an unknown error from API.');
+    }
   },
 };
