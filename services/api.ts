@@ -1,4 +1,3 @@
-
 import { AuthenticatedUser, User, Role, Lead, LeadStatus } from '../types';
 
 export interface UserCredentials {
@@ -68,7 +67,6 @@ async function apiRequest<T_Response = any>(
     throw e;
   }
 }
-
 
 // --- Auth Service ---
 export const authService = {
