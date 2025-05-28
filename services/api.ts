@@ -10,7 +10,7 @@ const SESSION_STORAGE_KEY = 'crmProUser';
 
 // --- Helper ---
 async function apiRequest<T_Response = any>(
-  sheetIdentifier: string, // e.g., "/Users" or "Users" or "Leads"
+  sheetIdentifier: string,
   method: 'GET' | 'POST',
   payload?: any
 ): Promise<T_Response> {
@@ -68,7 +68,6 @@ async function apiRequest<T_Response = any>(
   }
 }
 
-
 // --- Auth Service ---
 export const authService = {
   login: async (credentials: UserCredentials): Promise<AuthenticatedUser> => {
@@ -78,55 +77,44 @@ export const authService = {
     };
     console.log('authService.login: Attempting with processed credentials:', {email: processedCredentials.email, password: processedCredentials.password ? '******' : 'N/A' });
 
-    const users = await apiRequest<User[]>('/Users', 'GET');
-    console.log(`authService.login: Users fetched (emails only):`, users.map(u => u.email));
+    const url = `${API_BASE_URL}?sheet=Users&login=true&email=${encodeURIComponent(processedCredentials.email)}&password=${encodeURIComponent(processedCredentials.password)}`;
 
-    if (!Array.isArray(users)) {
-        console.error('authService.login: CRITICAL - Fetched users is not an array. Cannot proceed. Users value:', users);
-        throw new Error('Login failed: Could not retrieve user data correctly.');
-    }
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
 
-    const normalizedEmail = processedCredentials.email.toLowerCase().trim();
-    const userByEmail = users.find(
-      u => u.email?.toLowerCase().trim() === normalizedEmail
-    );
-
-    if (userByEmail) {
-      console.log(`authService.login: Found user by email: ${userByEmail.email}. Comparing password.`);
-      if (userByEmail.password === processedCredentials.password) {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { password, ...authenticatedUser } = userByEmail;
-        sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(authenticatedUser));
-        console.log('authService.login: Password match. Login successful for user ID:', authenticatedUser.id);
-        return authenticatedUser;
-      } else {
-        let sheetPasswordState = 'UNKNOWN';
-        if (userByEmail.password === undefined || userByEmail.password === null) {
-            sheetPasswordState = 'NOT_SET (null/undefined)';
-        } else if (userByEmail.password === '') {
-            sheetPasswordState = 'EMPTY_STRING';
-        } else {
-            sheetPasswordState = 'EXISTS (non-empty)';
-        }
-
-        let providedPasswordState = 'UNKNOWN';
-        if (processedCredentials.password === '') {
-            providedPasswordState = 'EMPTY_STRING';
-        } else {
-            providedPasswordState = 'EXISTS (non-empty)';
-        }
-        console.warn(`authService.login: Password mismatch for email: ${processedCredentials.email}. Sheet password state: ${sheetPasswordState}, Provided password state: ${providedPasswordState}.`);
+      if (!response.ok) {
+        console.error(`authService.login: API responded with status ${response.status} ${response.statusText}`);
         throw new Error('Invalid email or password.');
       }
-    } else {
-      console.warn(`authService.login: No user found with email: ${processedCredentials.email}. Number of users checked: ${users.length}.`);
+
+      const data = await response.json();
+      console.log('authService.login: API response:', data);
+
+      if (data.success && data.user) {
+        const authenticatedUser = data.user as AuthenticatedUser;
+        sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(authenticatedUser));
+        console.log('authService.login: Login successful for user:', authenticatedUser.email);
+        return authenticatedUser;
+      } else {
+        console.warn('authService.login: Login failed. Invalid credentials.');
+        throw new Error('Invalid email or password.');
+      }
+    } catch (error) {
+      console.error('authService.login: Error during login attempt:', error);
       throw new Error('Invalid email or password.');
     }
   },
+
   logout: async (): Promise<void> => {
     sessionStorage.removeItem(SESSION_STORAGE_KEY);
     return Promise.resolve();
   },
+
   getCurrentUser: async (): Promise<AuthenticatedUser | null> => {
     const storedUser = sessionStorage.getItem(SESSION_STORAGE_KEY);
     return storedUser ? JSON.parse(storedUser) : null;
@@ -142,11 +130,11 @@ export const userService = {
         return [];
     }
     return usersFromSheet.map(u => {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { password, ...userWithoutPassword } = u;
       return userWithoutPassword;
     });
   },
+
   getUserById: async (userId: string): Promise<User | undefined> => {
     const users = await apiRequest<User[]>('/Users', 'GET');
      if (!Array.isArray(users)) {
@@ -155,20 +143,20 @@ export const userService = {
     }
     const user = users.find(u => u.id === userId);
     if (user) {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { password, ...userWithoutPassword } = user;
         return userWithoutPassword;
     }
     return undefined;
   },
+
   addUser: async (userData: Omit<User, 'id'> & { passwordInput: string }): Promise<User> => {
     const { passwordInput, ...restUserData } = userData;
     const newUserPayload: Partial<User> = { ...restUserData, password: passwordInput };
     const addedUser = await apiRequest<User>('/Users', 'POST', newUserPayload);
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { password, ...userToReturn } = addedUser;
     return userToReturn;
   },
+
   updateUser: async (userId: string, userData: Partial<Omit<User, 'id' | 'email'>> & { passwordInput?: string }): Promise<User> => {
     const dataToUpdate: any = {};
     for (const key in userData) {
@@ -182,10 +170,10 @@ export const userService = {
 
     const payload = { action: 'update', id: userId, data: dataToUpdate };
     const updatedUserFromApi = await apiRequest<User>('/Users', 'POST', payload);
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { password, ...userToReturn } = updatedUserFromApi;
     return userToReturn;
   },
+
   deleteUser: async (userId: string): Promise<void> => {
     await apiRequest('/Users', 'POST', { action: 'delete', id: userId });
   },
@@ -201,6 +189,7 @@ export const leadService = {
     }
     return leads;
   },
+
   addLead: async (leadData: Omit<Lead, 'id' | 'createdAt' | 'updatedAt' | 'assignedToName'>): Promise<Lead> => {
     const payload = {
         ...leadData,
@@ -209,6 +198,7 @@ export const leadService = {
     };
     return await apiRequest<Lead>('/Leads', 'POST', payload);
   },
+
   updateLead: async (leadId: string, leadData: Partial<Omit<Lead, 'id' | 'createdAt' | 'assignedToName'>>): Promise<Lead> => {
     const payload = {
         action: 'update',
