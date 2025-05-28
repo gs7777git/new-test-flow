@@ -1,0 +1,6 @@
+{
+  "name": "CRM Pro - Google Sheets Edition",
+  "description": "A professional Customer Relationship Management (CRM) web application that uses Google Sheets as a simulated backend. Features lead management, user roles, activity tracking, and sales reports.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}
