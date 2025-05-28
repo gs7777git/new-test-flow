@@ -218,4 +218,6 @@ export const leadService = {
             updatedAt: new Date().toISOString()
         }
     };
-    return await apiRequest
+    return await apiRequest<Lead>('/Leads', 'POST', payload);
+  },
+};
